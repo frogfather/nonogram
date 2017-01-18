@@ -1,0 +1,86 @@
+object mainform: Tmainform
+  Left = 192
+  Top = 115
+  ActiveControl = Edit1
+  AutoScroll = False
+  Caption = 'Nonogram'
+  ClientHeight = 546
+  ClientWidth = 764
+  Color = clBackground
+  Menu = MainMenu1
+  PixelsPerInch = 96
+  TextHeight = 17
+  TextWidth = 7
+  object pcolour: TPanel
+    Left = 0
+    Top = 505
+    Width = 764
+    Height = 41
+    Align = alBottom
+    BevelInner = bvRaised
+    BevelOuter = bvLowered
+    TabOrder = 0
+    object Edit1: TEdit
+      Left = 584
+      Top = 8
+      Width = 100
+      Height = 25
+      TabOrder = 0
+    end
+  end
+  object Edit2: TEdit
+    Left = 656
+    Top = 392
+    Width = 100
+    Height = 25
+    TabOrder = 1
+    Text = 'Edit2'
+  end
+  object lb1: TListBox
+    Left = 0
+    Top = 424
+    Width = 764
+    Height = 81
+    Align = alBottom
+    TabOrder = 2
+  end
+  object Button1: TButton
+    Left = 680
+    Top = 360
+    Width = 75
+    Height = 25
+    Caption = 'test'
+    TabOrder = 3
+    OnClick = Button1Click
+  end
+  object MainMenu1: TMainMenu
+    Left = 104
+    Top = 24
+    object Game1: TMenuItem
+      Caption = 'Game'
+      object New1: TMenuItem
+        Caption = 'New'
+        object Fromfile1: TMenuItem
+          Caption = 'From file'
+          OnClick = Fromfile1Click
+        end
+        object Manual1: TMenuItem
+          Caption = 'Manual'
+        end
+      end
+      object Save1: TMenuItem
+        Caption = 'Save'
+      end
+      object Load1: TMenuItem
+        Caption = 'Load'
+      end
+    end
+  end
+  object OpenDialog1: TOpenDialog
+    FilterIndex = 0
+    Height = 0
+    Width = 0
+    Left = 456
+    Top = 24
+  end
+end
