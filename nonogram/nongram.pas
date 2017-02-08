@@ -32,13 +32,13 @@ type
   Function Createeditbox(const BoxName:string; BoxParent:TComponent; Boxcolour:Tcolor; X,Y,W,H: Integer; Thetext:String):TEdit;
   Function Createpaintbox(const PaintboxName:String; PaintboxParent:TComponent; Paintboxcolor:TColor; X,Y,W,H: Integer):TPaintbox;
   Function Getlongest(input:Tstringlist):Integer;
-  Function Getsmallestblock(elementNo,smallestSpace,smallestSpacePos:Integer;row:Boolean = true):Integer;
+  Function smallestSpaceCanBeUsed(elementNo,smallestSpace,smallestSpacePos:Integer;row:Boolean = true):Integer;
   Function Getnumbers(input:String):Tstringlist;
   Procedure Startgame(name: string; columns,rows:Tstringlist);
   Procedure Loadfile(filename:string);
   Function GetPaintboxByName(name:String):TPaintbox;
-  Function Getgrid(x,y:Integer):String;
-  Function setgrid(x,y:Integer;data:String):Boolean;
+  Function Getgrid(x,y:Integer;level:integer=0):String;
+  Function setgrid(x,y:Integer;data:String;level:integer=0):Boolean;
   Function getx(name:String):Integer;
   Function gety(name:String):Integer;
   Function getClearSquareCount:integer;
@@ -53,20 +53,23 @@ type
   Function setBox(x,y:Integer;fillpattern:String;notoggle:Boolean=false):Boolean;
   Function elementIsComplete(elementNo:integer;row:Boolean=true):Boolean;
   Procedure drawActionBoxes;
-  Function basicOverlapRow:Integer;
-  Function basicOverlapColumn:Integer;
-  Function edgeProximityRowFirst:Integer;
-  Function edgeProximityRowLast:Integer;
-  Function edgeProximityColFirst:Integer;
-  Function edgeProximityColLast:Integer;
-  Function singleNumberRow:Integer;
-  Function singleNumberColumn:Integer;
+  Function basicOverlap(row:Boolean=true):Integer;
+  Function edgeProximity(row:boolean=true):Integer;
+  Function singleNumberRow(row:boolean = true):Integer;
   Function getPlayable(elementNo:Integer;row:Boolean = true):Integer;
   Function getFirstUncrossed(elementNo:Integer;row:Boolean = true):Integer;
   Function getSmallestSpace(elementNo:integer;row:Boolean = true):TStringlist;
   Function crossSmallSpaces(elementNo:Integer;row:Boolean = true):Boolean;
   Function crossAllSmallSpaces:integer;
-  Procedure fillTest(elementNo:Integer;row:boolean=true);
+  Function fillTest(elementNo,playable:Integer;row:boolean=true):integer;
+  Function identifyBlock(elementNo,blockStart,blockLength:integer;blockColour:string;row:boolean):integer;
+  Function identifyBlocks(ElementNo:Integer;row:boolean=true):integer;
+  Function getBlockCount(ElementNo:integer;row:boolean=true):integer;
+  Function getBlockLength(ElementNo,blockNo:integer;row:boolean=true):integer;
+  Function getSpaceCount(ElementNo:integer;row:boolean):integer;
+  Function getActualBlocks(ElementNo:integer;row:Boolean=true):integer;
+  Function spacesThatMustBeCrossed(ElementNo:integer;row:boolean=true):integer;
+  Function getActualBlockLength(ElementNo,blockNo:Integer;row:boolean=true):integer;
   public
     { Public declarations }
   end;
@@ -77,7 +80,7 @@ T3DArray = array of array of array of string;
 
 var
   mainform: Tmainform;
-  game: T2DArray;
+  game: T3DArray;
   columnData: T3DArray;
   rowData: T3DArray;
   testArray: T2DArray;
@@ -185,15 +188,14 @@ End;
 
 
 
-Function Tmainform.getgrid(x,y:Integer):String;
+Function Tmainform.getgrid(x,y:Integer;level:integer=0):String;
 BEGIN
-result:=game[x,y];
+result:=game[x,y,level];
 END;
 
-Function Tmainform.setgrid(x,y:Integer;data:String):Boolean;
-
+Function Tmainform.setgrid(x,y:Integer;data:String;level:integer=0):Boolean;
 BEGIN
-game[x,y]:=data;
+game[x,y,level]:=data;
 result:=true;
 END;
 
@@ -271,19 +273,115 @@ result:=0;
 end;
 END;
 
+Function Tmainform.getBlockLength(ElementNo,blockNo:integer;row:boolean=true):integer;
+var
+maxblocks:integer;
+data:string;
+BEGIN
+if row then maxblocks:=length(rowData[0])-1 else maxblocks := length(columndata[0])-1;
+if blockNo <= maxblocks then
+  begin
+  if row then data:=getRowData(elementNo,blockNo,0)
+  else data:= getColumnData(elementNo,blockNo,0);
+  if data <> '' then result := strtoint(data) else result:=-1;
+  end else result :=-1;
+END;
+
+Function Tmainform.getSpaceCount(ElementNo:integer;row:boolean):integer;
+var
+i,limit,spaceCount:integer;
+thisSquare,lastSquare:string;
+BEGIN
+spaceCount:=0;
+if row then limit := length(columndata)-1 else limit:=length(rowdata)-1;
+lastSquare:='cross';
+for i:=0 to limit do
+  begin
+  if row then thisSquare:= getgrid(i,elementNo) else thisSquare:= getGrid(elementNo,i);
+  if (thisSquare = 'clear')and(lastSquare = 'cross')
+  then spaceCount:=spaceCount+1;
+  lastSquare:=thisSquare;
+  end;
+result:=spaceCount;
+END;
+
+Function Tmainform.getBlockCount(ElementNo:integer;row:boolean=true):integer;
+var
+data:string;
+i,blockcount,maxblocks:integer;
+BEGIN
+{can do this by looking at row and column data}
+{easiest way to find size of row/column array level 2}
+{and find first non empty}
+if row then i :=length(rowData[0])
+else i := length(columnData[0]);
+maxblocks:=i;
+blockcount:=-1;
+  while i > 0 do
+  begin
+  if row then data := getRowData(elementNo,i-1,0)
+  else data := getColumnData(elementNo,i-1,0);
+  if (data = '')and(blockcount = -1) then
+    begin
+    blockcount:=maxblocks - i;
+    end;
+  i := i-1;
+  if (i=0)and(blockcount = -1) then blockcount:=maxblocks;
+  end;
+result:=blockcount;
+END;
+
 Function Tmainform.setClearSquareCount(count:Integer):boolean;
 BEGIN
 selector[3]:=inttostr(count);
 result:=true;
 END;
 
+Function Tmainform.getActualBlocks(ElementNo:integer;row:Boolean):integer;
+var
+diff:boolean;
+prev,data:string;
+i,blocklength,limit,blockcount:integer;
+BEGIN
+if row then limit:=length(columndata) else limit:=length(rowdata);
+blockcount:=0;
+blocklength :=0;
+prev:='cross';
+for i := 0 to limit do
+  begin
+  if i<limit then
+    begin
+    if row then data := getgrid(i,elementNo) else data := getgrid(elementNo,i);
+    end else data:='cross';
+  diff:=(prev<>data);
+  if diff then
+    begin
+    if blocklength > 0 then
+      begin
+      blockcount:=blockcount+1;
+      blocklength:=0;
+      end;
+    if (data<>'cross')and(data<>'clear')then blocklength:=blocklength+1;
+    end else
+    begin
+    if (data<>'cross')and(data<>'clear')then blocklength:=blocklength+1;
+    end;
+  prev:=data;
+  end;
+result:=blockcount;
+END;
+
 Function Tmainform.getPlayable(elementNo:Integer;row:boolean):Integer;
 var
 i:integer;
-firstfree,lastfree:integer;
+firstfree,lastfree,clear:integer;
 arrayToAnalyse:array of string;
+clearfound:boolean;
 BEGIN
 {finds the number of squares that have not been marked with crosses}
+{additionally it should return zero if there are no clear squares}
+{because that element is filled}
+clearfound:=false;
 if row then
   begin
   setLength(arrayToAnalyse,length(game));
@@ -320,9 +418,99 @@ lastfree:=length(arrayToAnalyse)-1;
       exit;
       end;
     end;
-result:=lastfree-firstfree+1;
+  for clear := firstfree to lastfree do
+  if arrayToAnalyse[clear] = 'clear' then
+    begin
+    clearfound:=true;
+    end;
+if clearfound = false then result:=0
+else result:=lastfree-firstfree+1;
 END;
 
+Function Tmainform.identifyBlocks(ElementNo:Integer;row:boolean):integer;
+var
+testArray:array of string;
+i,spaces,blocks:integer;
+spacebefore,blocklength,spaceafter:integer;
+thisSquare,prevSquare:string;
+valid:boolean;
+BEGIN
+{assemble a copy of the relevant element}
+if row then
+  begin
+  setlength(testArray,length(columndata));
+  for i:=0 to length(testArray)-1 do
+    begin
+    testArray[i]:=getgrid(i,elementNo);
+    end;
+  end else
+  begin
+  setlength(testArray,length(rowdata));
+  for i:=0 to length(testArray)-1 do
+    begin
+    testArray[i]:=getgrid(elementNo,i);
+    end;
+  end;
+{we have a clone of the current row - lets analyse it}
+spaces := getSpaceCount(ElementNo,row);
+blocks := getActualBlocks(ElementNo,row);
+if row then
+lb1.Items.Add('row '+inttostr(elementNo)+' has '+inttostr(spaces)+' spaces and '+inttostr(blocks)+' blocks')else
+lb1.Items.Add('col '+inttostr(elementNo)+' has '+inttostr(spaces)+' spaces and '+inttostr(blocks)+' blocks');
+if (blocks > 0)and(spaces>0) then
+  begin
+  spacebefore:=0;
+  blocklength:=0;
+  spaceafter:=0;
+  valid:=false;
+  prevSquare:='cross';
+  i:=getfirstuncrossed(elementNo,row);
+    repeat
+    if i< length(testArray) then thisSquare:=testArray[i] else thisSquare:='cross';
+
+    if thisSquare='clear' then
+      begin
+      if blocklength=0 then spacebefore:=spacebefore+1 else spaceafter:=spaceafter+1;
+      end else
+    if thisSquare='cross' then
+      begin
+      if blocklength=0 then spacebefore:=0 else valid:=true;
+      end else
+      begin
+      if (thisSquare<>prevSquare)then
+        begin
+        if (prevSquare<>'cross')then
+          begin
+          if prevsquare='clear' then blocklength:=blocklength+1 else valid:=true;
+          end;
+        end else blocklength:=blocklength+1;
+      end;
+    if valid = true then
+      begin
+      lb1.Items.Add(booltostr(row)+' el '+inttostr(elementNo)+' spaces before: '+inttostr(spacebefore)+' block: '+inttostr(blocklength)+' spaces after '+inttostr(spaceafter));
+      spacebefore:=0;
+      spaceafter:=0;
+      valid:=false;
+      prevsquare:='cross';
+      blocklength:=0;
+      end;
+    prevSquare:=thisSquare;  
+    i:=i+1;
+    until i=length(testArray);
+{this will look at the current arrangement of the row}
+{try to identify each block in turn}
+{not much point trying to do this unless the total}
+{block length is greater than playable}
+  end;
+result := 0;
+END;
+
+
+Function Tmainform.identifyBlock(elementNo,blockStart,blockLength:integer;blockColour:string;row:boolean):integer;
+BEGIN
+{this will eventually identify a block}
+result:=-1;
+END;
 
 Function TMainform.getFirstUncrossed(elementNo:Integer;row:Boolean = true):Integer;
 var
@@ -352,7 +540,7 @@ else
 result:=i;
 END;
 
-Function TMainform.Getsmallestblock(elementNo,smallestSpace,smallestSpacePos:Integer;row:Boolean):Integer;
+Function TMainform.smallestSpaceCanBeUsed(elementNo,smallestSpace,smallestSpacePos:Integer;row:Boolean):Integer;
 var
 testRowOffset:integer;
 elementLength,elementfillLength,blocksize,lastBlocksize:integer;
@@ -360,19 +548,19 @@ blockFits,noOverrun,matchFound,newBlockFound,done:boolean;
 BEGIN
 {This finds the smallest block that will not result}
 {in the rest of the row going out of range}
-if row then fillTest(elementNo) else fillTest(elementNo,false);
+if row then fillTest(elementNo,length(columndata)) else fillTest(elementNo,length(columndata),false);
 elementfillLength:=getElementFillLength(elementNo,Row);
 if row then elementLength:=length(columndata)
 else elementLength:=length(rowData);
 {start with the first square of the first block lining up with}
 {the first square of the smallest space}
-testRowOffset:=smallestSpacePos;
+testRowOffset:=smallestSpacePos-1;
 blockfits:=false;
 noOverrun:=false;
 while testRowOffset >= 0 do
   begin
   {will the selected block go into this space?}
-  blocksize:=strtoint(testArray[smallestSpacePos-testRowOffset][1]);
+  blocksize:=strtoint(testArray[smallestSpacePos-(testRowOffset+1)][1]);
   if blocksize>0 THEN
     BEGIN
     blockFits:=(blocksize <= smallestspace);
@@ -388,16 +576,51 @@ while testRowOffset >= 0 do
     {move to the start of the next block}
     {either the second level of the array is < 1 }
     {or the offset drops to zero}
+    newBlockFound:=false;
       repeat
       testRowOffset:=testRowOffset-1;
-      lastBlocksize:=blocksize;
-      blocksize:=strtoint(testArray[smallestSpacePos-testRowOffset][1]);
-      newBlockFound:=(lastBlockSize<=0) and (blockSize >0);
-      done:=(testRowOffset=0) or newBlockFound;
+      if testRowOffset > 0 then
+        begin
+        lastBlocksize:=blocksize;
+        blocksize:=strtoint(testArray[smallestSpacePos-(testRowOffset+1)][1]);
+        newBlockFound:=(lastBlockSize<=0) and (blockSize >0);
+        end;
+      done:=(testRowOffset<=0) or newBlockFound;
       until done;
     end;
   end;
 result:=0;
+END;
+
+Function Tmainform.getActualBlockLength(ElementNo,blockNo:Integer;row:boolean=true):integer;
+var
+i,blockcount,blocklength,limit:integer;
+prev,data:string;
+BEGIN
+if row then limit:=length(columndata) else limit:=length(rowdata);
+blockcount:=-1;
+blocklength:=0;
+prev:='cross';
+  for i:=0 to limit do
+  begin
+  if i<limit then
+    begin
+    if row then data:= getgrid(i,elementNo)
+    else data:= getgrid(elementNo,i);
+    end else data:='cross';
+   if (data<>'clear')and(data<>'cross') then
+    begin
+    {Start counting if there's a change}
+    {and this is the block we're looking for}
+    if (prev<>data) then
+      begin
+      blockcount:=blockcount+1;
+      end;
+    if blockcount = blockno then blocklength:=blocklength+1;
+    end;
+  prev:=data;
+  end;
+result := blocklength;
 END;
 
 Function TMainform.getSmallestSpace(elementNo:integer;row:Boolean = true):TStringlist;
@@ -418,14 +641,14 @@ if row then smallest:=length(columndata)
 limit:=smallest-1;
 for i:=0 to limit do
   begin
-  if row then data:=getgrid(i,elementNo-1) else data:=getgrid(elementno-1,i);
+  if row then data:=getgrid(i,elementNo) else data:=getgrid(elementno,i);
   if (data='clear')and(startrun) then current:=current+1;
   if (data='cross')or(i=limit) then
     begin
     startrun:=true;
     if (current<>0)and(current<smallest)then
       begin
-      smallestpos:=i+1-current;
+      smallestpos:=i-current;
       if i=limit then smallestpos:=smallestpos+1;
       smallest:=current;
       end;
@@ -448,7 +671,7 @@ BEGIN
 if row then
 for i:=0 to length(columndata)-1 do
   begin
-  if getgrid(i,elementno-1)='clear' then
+  if getgrid(i,elementno)='clear' then
     begin
     result:=false;
     exit;
@@ -456,7 +679,7 @@ for i:=0 to length(columndata)-1 do
   end else
 for i:=0 to length(rowdata)-1 do
   begin
-  if getgrid(elementno-1,i)='clear' then
+  if getgrid(elementno,i)='clear' then
     begin
     result:=false;
     exit;
@@ -485,7 +708,7 @@ BEGIN
 elementlength:=0;
 if (row) then blockDataLength:=length(rowdata[0])-1
 else blockdatalength:=length(columndata[0])-1;
-for i:=0 to blockdatalength do
+for i:=0 to blockdatalength-1 do
   begin
   if row then data:=getRowData(elementNo,i,0)
   else data:=getColumnData(elementNo,i,0);
@@ -507,7 +730,7 @@ currentboxset,newboxset:String;
 clearsquarecount:integer;
 Currentbox:TPaintbox;
 BEGIN
-currentboxset:= getgrid(x-1,y-1);
+currentboxset:= getgrid(x,y);
 if currentboxset = 'clear' then
   begin
   newboxset:=fillpattern;
@@ -527,7 +750,7 @@ if (currentboxset <> newboxset) then
   if currentboxset = 'clear' then clearsquarecount := clearsquarecount -1 else
   if newboxset = 'clear' then clearsquarecount := clearsquarecount +1;
   setClearSquareCount(clearsquarecount);
-  setgrid(x-1,y-1,newboxset);
+  setgrid(x,y,newboxset);
   currentbox:=getpaintboxbyname('c'+inttostr(x)+'r'+inttostr(y));
   if currentbox <> nil then
     with currentbox do
@@ -550,7 +773,7 @@ BEGIN
 heightofgame:=length(game[0]);
 xpos:=0;
 ypos:=0;
-bottombox:=getpaintboxbyname('c1r'+inttostr(heightofgame));
+bottombox:=getpaintboxbyname('c1r'+inttostr(heightofgame-1));
 if bottombox <> nil then
   begin
   xpos:=bottombox.Left-pcolour.left;
@@ -564,22 +787,28 @@ xpos:=xpos+25;
 createpaintbox('clBlack',pcolour,clMid,xpos,ypos,20,20);
 END;
 
-Procedure Tmainform.fillTest(elementNo:Integer;row:Boolean);
+Function Tmainform.fillTest(elementNo,playable:Integer;row:Boolean):integer;
 var
 block,i:integer;
 data,fillpattern:String;
-blocklength,offset:integer;
+blocklength,totalBlockLength,offset:integer;
 blockDataLength:integer;
 BEGIN
+totalBlockLength:=0;
 offset:=0;
 setLength(testArray,0,0);
+if playable = 0 then
+  begin
+  result:=0;
+  exit;
+  end;
 if row then
   begin
-  setLength(testArray,length(columndata),2);
+  setLength(testArray,playable,2);
   blockDataLength:=length(rowdata[0])-1;
   end else
   begin
-  setLength(testArray,length(rowdata),2);
+  setLength(testArray,playable,2);
   blockDataLength:=length(columndata[0])-1;
   end;
 for i:=0 to length(testArray)-1 do
@@ -591,16 +820,17 @@ for block:=0 to blockDataLength do
   begin
   if row then
     begin
-    data:=getRowData(elementNo-1,block,0);
-    fillpattern:=getRowData(elementNo-1,block,1);
+    data:=getRowData(elementNo,block,0);
+    fillpattern:=getRowData(elementNo,block,1);
     end else
     begin
-    data:=getColumnData(elementNo-1,block,0);
-    fillpattern:=getColumnData(elementNo-1,block,1);
+    data:=getColumnData(elementNo,block,0);
+    fillpattern:=getColumnData(elementNo,block,1);
     end;
   if data<>'' then
     begin
     blocklength:=strtoint(data);
+    totalBlocklength:=totalBlockLength+blockLength;
     for i:=offset to offset+blocklength-1 do
       begin
       testArray[i][0]:=fillpattern;
@@ -612,9 +842,11 @@ for block:=0 to blockDataLength do
       testArray[offset][0]:='cross';
       testArray[offset][1]:='0';
       offset:=offset+1;
+      totalBlockLength:=totalBlockLength+1;
       end;
     end;
   end;
+result:=totalBlockLength;
 END;
 
 
@@ -625,7 +857,7 @@ thetext:string;
 currentdata:TStringlist;
 Begin
 {set the dimensions of the game grid}
-SetLength(game,columns.Count,rows.count);
+SetLength(game,columns.Count,rows.count,2);
 {initialise the selector}
 {**change this - no need to have two elements for the current setting}
 selector[1]:='clear';
@@ -639,44 +871,46 @@ rowcount :=getlongest(rows);
 {now set up the row and column data}
 {these are 3d arrays with row,box,level}
 {and col,box,level}
-SetLength(rowData,rows.count,rowcount,2);
-SetLength(columnData,columns.count,colcount,2);
+SetLength(rowData,rows.count,rowcount,3);
+SetLength(columnData,columns.count,colcount,3);
 
-for x:=1 to columns.Count do
+for x:=0 to columns.Count-1 do
   begin
-  currentdata:=getnumbers(columns[x-1]);
-  for y:=1 to colcount do
+  currentdata:=getnumbers(columns[x]);
+  for y:=0 to colcount-1 do
     begin
-    if y > (colcount-currentdata.Count) then
-    thetext:=currentdata[y-(colcount+1-currentdata.count)]
+    if y >= (colcount-currentdata.Count) then
+    thetext:=currentdata[y-(colcount-currentdata.count)]
     else thetext:='';
 
-    Createeditbox('c'+inttostr(x)+'n'+inttostr(y),mainform,clBase,(21*rowcount)+((x-1)*21),((y-1)*21),20,20,thetext);
-    setcolumnData(x-1,y-1,0,thetext);
-    setcolumnData(x-1,y-1,1,'clBlack');
+    Createeditbox('c'+inttostr(x)+'n'+inttostr(y),mainform,clBase,(21*rowcount)+((x)*21),((y)*21),20,20,thetext);
+    setcolumnData(x,y,0,thetext);
+    setcolumnData(x,y,1,'clBlack');
+    setcolumnData(x,y,2,'u');
     end;
   end;
 
-for y:= 1 to rows.Count do
+for y:= 0 to rows.Count-1 do
   begin
-  currentdata:=getnumbers(rows[y-1]);
-  for x:=1 to rowcount do
+  currentdata:=getnumbers(rows[y]);
+  for x:=0 to rowcount-1 do
     begin
-    if x > (rowcount-currentdata.Count) then
-    thetext:=currentdata[x-(rowcount+1-currentdata.count)]
+    if x >= (rowcount-currentdata.Count) then
+    thetext:=currentdata[x-(rowcount-currentdata.count)]
     else thetext:='';
-    Createeditbox('r'+inttostr(x)+'n'+inttostr(y),mainform,clBase,((x-1)*21),(21*colcount)+((y-1)*21),20,20,thetext);
-    setRowData(y-1,x-1,0,thetext);
-    setRowData(y-1,x-1,1,'clBlack');
+    Createeditbox('r'+inttostr(x)+'n'+inttostr(y),mainform,clBase,((x)*21),(21*colcount)+((y)*21),20,20,thetext);
+    setRowData(y,x,0,thetext);
+    setRowData(y,x,1,'clBlack');
+    setRowData(y,x,2,'u');
     end;
   end;
 
-for y:= 1 to rows.count do
+for y:= 0 to rows.count-1 do
   begin
-  for x:= 1 to columns.count do
+  for x:= 0 to columns.count-1 do
     begin
-    setgrid(x-1,y-1,'clear');
-    Createpaintbox('c'+inttostr(x)+'r'+inttostr(y),mainform,clMid,(21*rowcount)+(21*(x-1)),(21*colcount)+(21*(y-1)),20,20);
+    setgrid(x,y,'clear');
+    Createpaintbox('c'+inttostr(x)+'r'+inttostr(y),mainform,clMid,(21*rowcount)+(21*x),(21*colcount)+(21*y),20,20);
     end;
   end;
 
@@ -828,7 +1062,7 @@ with sender as TPaintbox do
 
   x:=getx(boxname);
   y:=gety(boxname);
-  contents:=getgrid(x-1,y-1);
+  contents:=getgrid(x,y);
 
   {test}
   if boxname = 'c1r1' then edit2.Text:='curr '+contents;
@@ -892,36 +1126,24 @@ with sender as TPaintbox do
   end;
 end;
 
+
 procedure Tmainform.Button1Click(Sender: TObject);
+var
+i:integer;
 begin
-{read the data from the column and row data arrays}
-{for col:=0 to length(columnData)-1 do
- for box:=0 to length(columnData[0])-1 do
-   begin
-   lb1.Items.add('c '+inttostr(col)+' b '+inttostr(box)+' level 0 '+getcolumndata(col,box,0));
-   lb1.Items.add('c '+inttostr(col)+' b '+inttostr(box)+' level 1 '+getcolumndata(col,box,1));
-   end;
-
-for row:=0 to length(rowData)-1 do
- for box:=0 to length(rowData[0])-1 do
-   begin
-   lb1.Items.add('r '+inttostr(row)+' b '+inttostr(box)+' level 0 '+getrowdata(row,box,0));
-   lb1.Items.add('r '+inttostr(row)+' b '+inttostr(box)+' level 1 '+getrowdata(row,box,1));
-   end;}
-
-lb1.Items.Add('basic overlap-row solved '+inttostr(basicOverlapRow)+' squares');
-lb1.Items.Add('basic overlap-column solved '+inttostr(basicOverlapColumn)+' squares');
-lb1.Items.Add('edgeproximityrowfirst solved '+inttostr(edgeProximityRowFirst)+' squares');
-lb1.Items.Add('edgeproximityrowlast solved '+inttostr(edgeProximityRowLast)+' squares');
-lb1.Items.Add('edgeproximitycolfirst solved '+inttostr(edgeProximityColFirst)+' squares');
-lb1.Items.Add('edgeproximitycollast solved '+inttostr(edgeProximityColLast)+' squares');
+lb1.Items.Add('basic overlap-row solved '+inttostr(basicOverlap)+' squares');
+lb1.Items.Add('basic overlap-column solved '+inttostr(basicOverlap(false))+' squares');
+lb1.Items.Add('edgeproximityrowfirst solved '+inttostr(edgeProximity)+' squares');
+lb1.Items.Add('edgeproximitycolfirst solved '+inttostr(edgeProximity(false))+' squares');
 lb1.Items.Add('singlenumberrow solved '+inttostr(singlenumberrow)+' squares');
-lb1.Items.Add('singlenumbercol solved '+inttostr(singlenumbercolumn)+' squares');
+lb1.Items.Add('singlenumbercol solved '+inttostr(singlenumberrow(false))+' squares');
 lb1.Items.Add('crossSmallSpaces solved '+inttostr(crossAllSmallSpaces)+' squares');
 
-{lb1.Items.Add('basic overlap-row pass 2 solved '+inttostr(basicOverlapRow)+' squares');
-lb1.Items.Add('basic overlap-column pass 2 solved '+inttostr(basicOverlapColumn)+' squares');}
-
+for i:=0 to length(game[0])-1 do identifyblocks(i);
+for i:=0 to length(game)-1 do identifyblocks(i,false);
+{lb1.Items.Add('basic overlap-row pass 2 solved '+inttostr(basicOverlap)+' squares');
+lb1.Items.Add('basic overlap-column pass 2 solved '+inttostr(basicOverlap(false))+' squares');
+}
 
 edit1.Text:=inttostr(getClearSquareCount);
 
@@ -930,496 +1152,241 @@ end;
 {stuff below here is concerned with solving the problems}
 {or trying to anyway...}
 
-Function Tmainform.basicOverlapRow:Integer;
+Function Tmainform.basicOverlap(row:boolean):Integer;
 Var
-rowNo,blockNo,blockLength,blockDataLength:Integer;
+elementNo,elementLimit,blockDataLength:Integer;
 playable,offset,position:Integer;
 leftlimit,rightlimit:Array of string;
 blockdifference,clearspace:integer;
 clearCountBefore,clearCountAfter:Integer;
-blockData,blockColour:String;
 lastcolourleft,lastcolourright:String;
 BEGIN
 clearCountBefore:=getClearSquareCount;
-for rowno:=1 to length(rowdata) do
+if row then elementLimit:= length(rowdata)
+else elementLimit:=length(columndata);
+for elementNo:=0 to elementLimit-1 do
   begin
-  playable:=getPlayable(rowno-1);
+  playable:=getPlayable(elementNo,row);
   if playable > 0 THEN
     begin
-    setlength(leftlimit,playable);
-    setlength(rightlimit,playable);
-    lb1.Items.add('playable on row '+inttostr(rowno)+' is '+inttostr(length(leftlimit)));
-    offset:=getFirstUncrossed(rowno-1);
-    position:=0;
-    blockdatalength:=0;
-    {fill the two arrays with the data from this row}
-    {one with the blocks as far left as they'll go}
-    {and the other with them as far right as they'll go}
-    for blockNo:=1 to length(rowdata[0]) do
+    blockdatalength:=fillTest(elementNo,playable,row);
+    if blockdatalength > playable/2 then
       begin
-      blockData:=getRowData(rowno-1,blockno-1,0);
-      if blockData <>'' then
-        try
-        blocklength:=strtoInt(blockdata); {current block}
-        blockdatalength:=blockdatalength+blocklength; {overall length of the data inc spaces}
-        blockColour:=getRowData(rowno-1,blockno-1,1);
-          repeat
-          leftLimit[position]:=blockcolour;
-          blocklength:=blocklength-1;
-          position:=position+1;
-          until blocklength =0;
+      setlength(leftlimit,playable);
+      setlength(rightlimit,playable);
+      offset:=getFirstUncrossed(elementNo-1,row);
+      position:=0;
+      clearspace:=length(testArray)-blockdatalength;
 
-        {at the moment only doing black and}
-        {white puzzles which always have a clear}
-        {space between blocks}
-        if blockno < length(rowdata[0]) then
-          begin
-          leftlimit[position]:='cross';
-          position:=position+1;
-          blockdatalength:=blockdatalength+1;
-          end;
-        except
-        {oops!}
-        end;
-      end;
-    {fill any remaining spaces with 'clear'}
-    while position < (length(leftlimit)) do
-      begin
-      leftLimit[position]:='clear';
-      position:=position+1;
-      end;
-    {rightlimit is the same data shifted to the right}
-    {so difference between blockdatalength and length of the test arrays}
-    {will give clear spaces at start}
-    position:=0;
-    clearspace:=length(leftlimit)-blockdatalength;
-    while position < clearspace do
-      begin
-      rightLimit[position]:='clear';
-      position:=position+1;
-      end;
-    while position < length(leftlimit) do
-      begin
-      rightLimit[position]:=leftlimit[position-clearspace];
-      position:=position+1;
-      end;
-  {now compare these two arrays}
-  {could be separate method - same for rows and columns}
-  {for the moment put it here}
-  position:=0;
-  blockdifference:=0;
-  lastcolourleft:='clear';
-  lastcolourright:='clear';
-  while position < length(leftlimit) do
-    begin
-    if leftlimit[position]<>lastcolourleft then
-      begin
-      lastcolourleft:=leftlimit[position];
-      blockdifference:=blockdifference-1;
-      end;
-      if rightlimit[position]<>lastcolourright then
+      while position < length(leftlimit) do
         begin
-        lastcolourright:=rightlimit[position];
-        blockdifference:=blockdifference+1;
+        leftLimit[position]:=testArray[position][0];
+        if position >= (length(testArray)-blockdatalength) then
+        rightLimit[position]:=testArray[position-clearspace][0] else
+        rightLimit[position]:='clear';
+        position:=position+1;
         end;
-
-      if (blockdifference=0)
-      and (leftlimit[position] = rightlimit[position])
-      and (leftlimit[position]<> 'clear') then
+      {now compare these two arrays}
+      {could be separate method - same for rows and columns}
+      {for the moment put it here}
+      position:=0;
+      blockdifference:=0;
+      lastcolourleft:='clear';
+      lastcolourright:='clear';
+      while position < length(leftlimit) do
         begin
-        {we have an overlap. Set the space to the specified colour}
-        setBox(position+offset+1,rowno,leftlimit[position],true);
-        lb1.Items.add('row found overlap '+inttostr(position+offset+1)+' '+inttostr(rowno));
-        end;
-      position:=position+1;
-      end;
-    end;
-  end;
-clearcountafter:=getClearSquareCount;
-result:=clearcountbefore-clearcountafter;
-END;
-
-Function Tmainform.basicOverlapColumn:Integer;
-Var
-colNo,blockNo,blockLength,blockDataLength:Integer;
-position,playable,offset:Integer;
-leftlimit,rightlimit:Array of string;
-blockdifference,clearspace:integer;
-clearCountBefore,clearCountAfter:Integer;
-blockData,blockColour:String;
-lastcolourleft,lastcolourright:String;
-BEGIN
-setlength(leftlimit,length(game[0]));
-setlength(rightlimit,length(game[0]));
-clearCountBefore:=getClearSquareCount;
-for colno:=1 to length(columndata) do
-  begin
-  playable:=getPlayable(colno-1,false);
-  setlength(leftlimit,playable);
-  setlength(rightlimit,playable);
-  lb1.Items.add('playable on col '+inttostr(colno)+' is '+inttostr(playable));
-  position:=0;
-  offset:=getFirstUncrossed(colno-1,false);
-  blockdatalength:=0;
-  {fill the two arrays with the data from this row}
-  {one with the blocks as far left as they'll go}
-  {and the other with them as far right as they'll go}
-    for blockNo:=1 to length(columndata[0]) do
-      begin
-      blockData:=getcolumnData(colno-1,blockno-1,0);
-      if blockData <>'' then
-        try
-        blocklength:=strtoInt(blockdata); {current block}
-        blockdatalength:=blockdatalength+blocklength; {overall length of the data inc spaces}
-        blockColour:=getColumnData(colno-1,blockno-1,1);
-          repeat
-          leftLimit[position]:=blockcolour;
-          blocklength:=blocklength-1;
-          position:=position+1;
-          until blocklength =0;
-
-        {at the moment only doing black and}
-        {white puzzles which always have a clear}
-        {space between blocks}
-        if blockno < length(columndata[0]) then
+        if leftlimit[position]<>lastcolourleft then
           begin
-          leftlimit[position]:='cross';
-          position:=position+1;
-          blockdatalength:=blockdatalength+1;
+          lastcolourleft:=leftlimit[position];
+          blockdifference:=blockdifference-1;
           end;
-        except
-        {oops!}
+        if rightlimit[position]<>lastcolourright then
+          begin
+          lastcolourright:=rightlimit[position];
+          blockdifference:=blockdifference+1;
+          end;
+        if (blockdifference=0)
+        and (leftlimit[position] = rightlimit[position])
+        and (leftlimit[position]<> 'clear') then
+          begin
+          {we have an overlap. Set the space to the specified colour}
+          if row then
+            begin
+            setBox(position+offset,elementNo,leftlimit[position],true);
+            end else
+            begin
+            setBox(elementNo,position+offset,leftlimit[position],true);
+            end;
+          end;
+        position:=position+1;
         end;
       end;
-    {fill any remaining spaces with 'clear'}
-    while position < (length(leftlimit)) do
-      begin
-      leftLimit[position]:='clear';
-      position:=position+1;
-      end;
-    {rightlimit is the same data shifted to the right}
-    {so difference between blockdatalength and length(leftlimit) will give clear spaces at start}
-    position:=0;
-    clearspace:=length(leftlimit)-blockdatalength;
-    while position < clearspace do
-      begin
-      rightLimit[position]:='clear';
-      position:=position+1;
-      end;
-    while position < length(leftlimit) do
-      begin
-      rightLimit[position]:=leftlimit[position-clearspace];
-      position:=position+1;
-      end;
-  {now compare these two arrays}
-  {could be separate method - same for rows and columns}
-  {for the moment put it here}
-
-  position:=0;
-  blockdifference:=0;
-  lastcolourleft:='clear';
-  lastcolourright:='clear';
-  while position < length(leftlimit) do
-    begin
-    if leftlimit[position]<>lastcolourleft then
-      begin
-      lastcolourleft:=leftlimit[position];
-      blockdifference:=blockdifference-1;
-      end;
-    if rightlimit[position]<>lastcolourright then
-      begin
-      lastcolourright:=rightlimit[position];
-      blockdifference:=blockdifference+1;
-      end;
-
-    if (blockdifference=0)
-    and (leftlimit[position] = rightlimit[position])
-    and (leftlimit[position]<> 'clear') then
-      begin
-      {we have an overlap. Set the space to the specified colour}
-      setBox(colno,position+offset+1,leftlimit[position],true);
-      lb1.Items.add('col found overlap '+inttostr(colno)+' '+inttostr(position+offset+1));
-      end;
-    position:=position+1;
     end;
   end;
 clearcountafter:=getClearSquareCount;
 result:=clearcountbefore-clearcountafter;
 END;
 
-Function Tmainform.edgeProximityRowFirst:Integer;
+
+Function Tmainform.edgeProximity(row:boolean):Integer;
 var
-rowno,colno:integer;
-blockno,firstnumber:integer;
-firstcolour:String;
+elementNo,elementLength,totalBlockLength,limit:integer;
+i,firstnumber:integer;
+elementData,elementColour,data:String;
 clearcountbefore,clearcountafter:integer;
+firstFound,done:boolean;
+rightlimit:Array of array of string;
 BEGIN
-{if first filled square is nearer the edge than the length}
-{of the first block then all squares from first filled square}
-{to length of first block must be filled in}
-{find first number - start with rows}
 clearcountbefore:=getclearsquarecount;
-for rowNo:=1 to length(rowdata) do
+if row then
   begin
-  blockno:=1;
-  while getRowData(rowno-1,blockno-1,0)= '' do
+  elementLength := length(columndata);
+  limit:=length(rowdata);
+  end else
+  begin
+  elementLength := length(rowdata);
+  limit:=length(columndata);
+  end;
+
+for elementNo:=0 to limit-1 do
+  begin
+  if row then totalBlockLength := fillTest(elementNo,elementLength)
+   else totalBlockLength := fillTest(elementNo,elementLength,false);
+  setLength(rightLimit,elementLength,2);
+  {set up the right limit array - same data shifted as far right as poss}
+  if totalBlockLength < elementLength then
+  for i:=0 to elementLength - 1 do
     begin
-    blockno:=blockno+1;
+    if i < (elementLength - totalBlockLength) then
+      begin
+      rightLimit[i][0] := 'clear';
+      rightLimit[i][1] := '-1';
+      end else
+      begin
+      rightLimit[i][0] := testArray[i-elementLength + totalBlockLength][0];
+      rightLimit[i][1] := testArray[i-elementLength + totalBlockLength][1];
+      end;
     end;
-  firstnumber:=strtoint(getRowdata(rowno-1,blockno-1,0));
-  firstcolour:=getRowdata(rowno-1,blockno-1,1);
-  {now see if any squares before length(firstnumber) is filled}
-  colno:=1;
-  while (getgrid(colno-1,rowno-1)<>firstcolour)and(colno<=firstnumber) do
+
+  {get the first element. If it's not filled then the element is blank}
+  elementData:=testArray[0][1];
+  if elementData <> '' then
     begin
-    colno:=colno+1;
+    firstnumber:=strtoint(elementData);
+    elementcolour:=testArray[0][0];
+    {now see if any squares before length(firstnumber) is filled}
+    i:=0;
+      repeat
+      if row then data := getgrid(i,elementNo)
+        else data := getgrid(elementNo,i);
+      firstFound := data = elementcolour;
+      if not firstFound then i:=i+1;
+      done := firstFound or (i >= firstnumber);
+      until done;
+    if firstFound then
+    while i < firstnumber do
+      begin
+      if row then setbox(i,elementNo,elementcolour,true);
+      i:=i+1;
+      end;
     end;
-  if colno<firstnumber then
-  while colno <= firstnumber do
+
+  elementData:=rightLimit[elementLength-1][1];
+  if elementData <> '' then
     begin
-    setbox(colno,rowno,firstcolour,true);
-    colno:=colno+1;
+    firstnumber:=elementLength-strtoint(elementData);
+    elementcolour:=rightLimit[elementLength-1][0];
+    {now see if any squares after length(firstnumber) is filled}
+    i:=elementLength-1;
+      repeat
+      if row then data := getgrid(i,elementNo)
+        else data := getgrid(elementNo,i);
+      firstFound := data = elementcolour;
+      if not firstFound then i:=i-1;
+      done := firstFound or (i < firstNumber);
+      until done;
+    if firstFound then
+    while i >= firstnumber do
+      begin
+      if row then setbox(i,elementNo,elementcolour,true) else
+        setbox(elementNo,i,elementcolour,true);
+      i:=i-1;
+      end;
     end;
   end;
+
 clearcountafter:=getClearSquareCount;
 result:=clearcountbefore-clearcountafter;
 END;
 
-Function Tmainform.edgeProximityRowLast:Integer;
-var
-rowno,colno:integer;
-blockno,lastnumber:integer;
-lastcolour:String;
-clearcountbefore,clearcountafter:integer;
+Function Tmainform.spacesThatMustBeCrossed(ElementNo:integer;row:boolean=true):integer;
 BEGIN
-{if last filled square is nearer the end than the length}
-{of the last block then all squares from last filled square}
-{back to length of last block must be filled in}
-{find last number - easy}
-clearcountbefore:=getclearsquarecount;
-for rowNo:=1 to length(rowdata) do
-  begin
-  blockno:=length(rowdata[0]);
-  lastnumber:=strtoint(getRowdata(rowno-1,blockno-1,0));
-  lastcolour:=getRowdata(rowno-1,blockno-1,1);
-  {now see if any squares nearer end than length(firstnumber) is filled}
-  colno:=length(game);
-  while (getgrid(colno-1,rowno-1)<>lastcolour)and(colno > (1+length(game)-lastnumber)) do
-    begin
-    colno:=colno-1;
-    end;
-  if colno > (1+length(game)-lastnumber) then
-  while colno > (1+length(game)-lastnumber) do
-    begin
-    setbox(colno,rowno,lastcolour,true);
-    colno:=colno-1;
-    end;
-  end;
-clearcountafter:=getClearSquareCount;
-result:=clearcountbefore-clearcountafter;
+{}
+result:=0;
 END;
 
-Function Tmainform.edgeProximityColFirst:Integer;
+Function Tmainform.singleNumberRow(row:boolean):Integer;
 var
-rowno,colno:integer;
-blockno,firstnumber:integer;
-firstcolour:String;
-clearcountbefore,clearcountafter:integer;
-BEGIN
-{if first filled square is nearer the edge than the length}
-{of the first block then all squares from first filled square}
-{to length of first block must be filled in}
-{find first number - start with rows}
-clearcountbefore:=getclearsquarecount;
-for ColNo:=1 to length(columndata) do
-  begin
-  blockno:=1;
-  while getColumnData(colno-1,blockno-1,0)= '' do
-    begin
-    blockno:=blockno+1;
-    end;
-  firstnumber:=strtoint(getColumndata(colno-1,blockno-1,0));
-  firstcolour:=getColumndata(colno-1,blockno-1,1);
-  {now see if any squares before length(firstnumber) is filled}
-  rowno:=1;
-  while (getgrid(colno-1,rowno-1)<>firstcolour)and(rowno<=firstnumber) do
-    begin
-    rowno:=rowno+1;
-    end;
-  if rowno<firstnumber then
-  while rowno <= firstnumber do
-    begin
-    setbox(colno,rowno,firstcolour,true);
-    rowno:=rowno+1;
-    end;
-  end;
-clearcountafter:=getClearSquareCount;
-result:=clearcountbefore-clearcountafter;
-END;
-
-Function Tmainform.edgeProximityColLast:Integer;
-var
-rowno,colno:integer;
-blockno,lastnumber:integer;
-lastcolour:String;
-clearcountbefore,clearcountafter:integer;
-BEGIN
-{if last filled square is nearer the end than the length}
-{of the last block then all squares from last filled square}
-{back to length of last block must be filled in}
-{find last number - easy}
-clearcountbefore:=getclearsquarecount;
-for colNo:=1 to length(Columndata) do
-  begin
-  blockno:=length(columndata[0]);
-  lastnumber:=strtoint(getColumndata(Colno-1,blockno-1,0));
-  lastcolour:=getColumndata(colno-1,blockno-1,1);
-  {now see if any squares nearer end than length(firstnumber) is filled}
-  rowno:=length(rowdata);
-  while (getgrid(colno-1,rowno-1)<>lastcolour)and(rowno > (1+length(rowdata)-lastnumber)) do
-    begin
-    rowno:=rowno-1;
-    end;
-  if rowno > (1+length(rowdata)-lastnumber) then
-  while rowno > (1+length(rowdata)-lastnumber) do
-    begin
-    setbox(colno,rowno,lastcolour,true);
-    rowno:=rowno-1;
-    end;
-  end;
-clearcountafter:=getClearSquareCount;
-result:=clearcountbefore-clearcountafter;
-END;
-
-Function Tmainform.singleNumberRow:Integer;
-var
-row,col:Integer;
-lastbox:Integer;
-blocklength:integer;
-firstfilled:Integer;
+element,i:Integer;
+blocklength,squaresfilled:integer;
+firstfilled,lastfilled:Integer;
 fillpattern:String;
+limit,elementlength,lastbox:integer;
 clearcountbefore,clearcountafter:Integer;
+done:boolean;
 BEGIN
 clearcountbefore:=getClearSquareCount;
 {A special case where there's only one block in a row}
 {or column}
-for row:=1 to length(rowdata) do
+
+if row then limit:=length(rowdata)-1
+else limit := length(columndata)-1;
+for element:=0 to limit do
   begin
-  lastbox:= length(rowdata[0]);
-  if (lastbox=1)OR(getrowdata(row-1,lastbox-2,0)='') then
-    try
-    blocklength:=strtoint(getrowdata(row-1,lastbox-1,0));
-    {find the first filled in square ignoring crosses}
-    col:=0;
-    fillpattern:='clear';
-    while ((fillpattern = 'clear') or (fillpattern = 'cross')) and (col<=length(columndata)) do
-      begin
-      col:=col+1;
-      if col<=length(columndata)
-       then fillpattern:=getgrid(col-1,row-1);
-      end;
-    if col<=length(game) then
-      begin
-      firstfilled:=col;
-      {now, any squares before firstfilled - length(block) must be crosses}
-      if firstfilled+blocklength-1 < length(columndata) then
-        for col:=firstfilled+blocklength to length(columndata) do
-        begin
-        setBox(col,row,'cross',true);
-        end;
-
-      col:=firstfilled;
-      while (col<length(columndata))
-      and (getgrid(col,row-1)=getgrid(col-1,row-1)) do
-        begin
-        col:=col+1;
-        end;
-      firstfilled:=col;
-
-
-      if (firstfilled-blocklength>0) then
-        for col:=1 to (firstfilled-blocklength) do
-        begin
-        setBox(col,row,'cross',true);
-        end;
-
-      end;
-    except
-    {assume blank row?}
-    if getrowdata(row-1,lastbox-1,0)='' then
-      begin
-      for col:=1 to length(columndata) do
-        begin
-        setBox(col,row,'cross',true);
-        end;
-      end;
+  blocklength:=-1;
+  if row then
+    begin
+    lastbox:=length(rowdata[0])-1;
+    if (lastbox=0)or(getrowdata(element,lastbox-1,0)='')
+    then blocklength:=strtoint(getrowdata(element,lastbox,0));
+    end else
+    begin
+    lastbox:=length(columndata[0])-1;
+    if (lastbox=0)or(getcolumndata(element,lastbox-1,0)='')
+    then blocklength:=strtoint(getcolumndata(element,lastbox,0));
     end;
-  end;
-clearcountafter:=getClearSquareCount;
-result:=clearcountbefore-clearcountafter;
-END;
-
-Function Tmainform.singleNumberColumn:Integer;
-var
-row,col:Integer;
-lastbox:Integer;
-blocklength:integer;
-firstfilled:Integer;
-fillpattern:String;
-clearcountbefore,clearcountafter:Integer;
-BEGIN
-clearcountbefore:=getClearSquareCount;
-{A special case where there's only one block in a row}
-{or column}
-for col:=1 to length(columndata) do
-  begin
-  lastbox:= length(columndata[0]);
-  if (lastbox=1)OR(getcolumndata(col-1,lastbox-2,0)='') then
+  if blocklength > -1 then
     try
-    blocklength:=strtoint(getcolumndata(col-1,lastbox-1,0));
-    {find the first filled in square ignoring crosses}
-    row:=0;
+    if row then elementlength:=length(columndata) else elementlength:=length(rowdata);
+    squaresFilled:=getActualBlockLength(Element,0,row);
     fillpattern:='clear';
-    while ((fillpattern = 'clear') or (fillpattern = 'cross')) and (row<=length(rowdata)) do
-      begin
-      row:=row+1;
-      if row<= length(rowdata)
-        then fillpattern:=getgrid(col-1,row-1);
-      end;
-    if row<=length(rowdata) then
-      begin
-      firstfilled:=row;
-      {now, any squares before firstfilled - length(block) must be crosses}
-      if firstfilled+blocklength-1 < length(rowdata) then
-        for row:=firstfilled+blocklength to length(rowdata) do
+    firstfilled:=-1;
+    lastfilled:=-1;
+    i:=0;
+      repeat
+      if row then fillpattern:=getgrid(i,element) else fillpattern:= getgrid(element,i);
+      if (fillpattern<>'clear')and(fillpattern<>'cross') then
         begin
-        setBox(col,row,'cross',true);
+        firstfilled:=i;
+        lastfilled:=firstfilled+squaresFilled -1;
         end;
+      i:=i+1;
+      done :=(i=elementlength)or(firstfilled>-1)
+      until done;
 
-      {now move firstfilled to be the first counting from the right}
-      row:=firstfilled;
-      while (row<length(rowdata))
-      and (getgrid(col-1,row)=getgrid(col-1,row-1)) do
+    if (firstfilled > -1)and(lastfilled > -1) then
+    for i:=0 to elementlength do
+      begin
+      if (i<=(lastfilled - blocklength))or(i>=(firstfilled + blocklength))
+      then
         begin
-        row:=row+1;
-        end;
-      firstfilled:=row;
-
-      if (firstfilled-blocklength>0) then
-        for row:=1 to (firstfilled-blocklength) do
-        begin
-        setBox(col,row,'cross',true);
+        if i < elementlength then
+        if row then
+        setBox(i,element,'cross',true)
+        else setBox(element,i,'cross',true);
         end;
       end;
     except
-    if getcolumndata(col-1,lastbox-1,0)='' then
-      begin
-      for row:=1 to length(rowdata) do
-        begin
-        setBox(col,row,'cross',true);
-        end;
-      end;
-
     end;
   end;
 clearcountafter:=getClearSquareCount;
@@ -1437,15 +1404,18 @@ smallestSpaceList:=getSmallestSpace(elementNo,row);
 smallestSpace:=strtoint(smallestspacelist[0]);
 smallestSpaceStart:=strtoint(smallestspacelist[1]);
 {the smallest block depends on the position of the smallest space}
-smallestBlock:=getSmallestBlock(elementNo,smallestSpace,smallestSpaceStart,row);
-if smallestSpace < smallestBlock then
+if smallestSpaceStart > 0 then
   begin
-  for i := smallestSpaceStart to smallestSpaceStart+smallestSpace-1 do
+  smallestBlock:=smallestSpaceCanBeUsed(elementNo,smallestSpace,smallestSpaceStart,row);
+  if smallestBlock = 0 then
     begin
-    if row then setbox(i,elementNo,'cross',true)
-    else setbox(elementNo,i,'cross',true)
+    for i := smallestSpaceStart to smallestSpaceStart+smallestSpace-1 do
+      begin
+      if row then setbox(i,elementNo,'cross',true)
+      else setbox(elementNo,i,'cross',true)
+      end;
     end;
-  end;
+  end;  
 result:=true;
 END;
 
@@ -1455,12 +1425,12 @@ clearcountbefore,clearcountafter:Integer;
 colno,rowno:integer;
 BEGIN
 clearcountbefore:=getClearSquareCount;
-for rowno:=1 to length(rowdata)do
+for rowno:=0 to length(rowdata)-1do
   begin
   if not elementIsComplete(rowno) then
   crossSmallSpaces(rowno);
   end;
-for colno:=1 to length(columndata)do
+for colno:=0 to length(columndata)-1do
   begin
   if not elementIsComplete(colno,false) then
   crossSmallSpaces(colno,false);

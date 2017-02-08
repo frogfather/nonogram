@@ -45,7 +45,7 @@ object mainform: Tmainform
     TabOrder = 2
   end
   object Button1: TButton
-    Left = 680
+    Left = 672
     Top = 360
     Width = 75
     Height = 25
